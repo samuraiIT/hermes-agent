@@ -152,6 +152,43 @@ class GitOperationResponse:
         return asdict(self)
 
 
+@dataclass
+class ModelSelectionRequest:
+    """Request from Claude Code to Hermes for model selection advice"""
+    task_description: str
+    task_type: str  # code_review|research|writing|analysis|coding
+    budget_tokens: int = 100_000
+    speed_required: bool = False
+    accuracy_required: bool = False
+    budget_aware: bool = True
+    prefer_local: bool = False
+
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass
+class ModelSelectionResponse:
+    """Response from Hermes back to Claude Code"""
+    status: str  # success|error
+    recommended_tier: str = ""  # fast|balanced|premium|ultra
+    model_id: str = ""
+    reasoning: str = ""
+    alternatives: Optional[List[Dict[str, Any]]] = None
+    estimated_cost: float = 0.0
+    error_message: Optional[str] = None
+    timestamp: str = None
+
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = datetime.utcnow().isoformat() + 'Z'
+        if self.alternatives is None:
+            self.alternatives = []
+
+    def to_dict(self):
+        return asdict(self)
+
+
 # ============================================================================
 # Request Handlers (Phase 1: Stub implementations)
 # ============================================================================
@@ -759,6 +796,192 @@ class GitOperationHandler(RequestHandler):
         return "git_operation_request"
 
 
+class ModelSelectionHandler(RequestHandler):
+    """Handle model_selection_request from Claude Code → Hermes"""
+
+    TIER_MODELS = {
+        "fast": "claude-haiku-4-5-20251001",
+        "balanced": "claude-sonnet-4-6",
+        "premium": "claude-opus-4-7",
+        "ultra": "claude-opus-4-8"
+    }
+
+    TIER_COSTS = {
+        "fast": {"input": 0.80, "output": 3.20},
+        "balanced": {"input": 3.00, "output": 15.00},
+        "premium": {"input": 15.00, "output": 75.00},
+        "ultra": {"input": 30.00, "output": 150.00}
+    }
+
+    async def handle(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Recommend optimal model tier"""
+        log.debug(f"ModelSelectionHandler: {request}")
+
+        try:
+            req = ModelSelectionRequest(**request)
+
+            # Validate request
+            if not req.task_description or len(req.task_description) > 5000:
+                return ModelSelectionResponse(
+                    status="error",
+                    error_message="task_description required and < 5000 chars"
+                ).to_dict()
+
+            # Analyze task complexity
+            complexity = self._analyze_complexity(req.task_description)
+
+            # Apply decision logic
+            recommended_tier = self._select_tier(
+                task_type=req.task_type,
+                complexity=complexity,
+                budget_tokens=req.budget_tokens,
+                speed_required=req.speed_required,
+                accuracy_required=req.accuracy_required,
+                budget_aware=req.budget_aware
+            )
+
+            # Get model + cost estimate
+            model_id = self.TIER_MODELS[recommended_tier]
+            cost = self._estimate_cost(recommended_tier, req.task_description)
+
+            # Generate reasoning
+            reasoning = self._generate_reasoning(recommended_tier, complexity, req)
+
+            # Get alternatives
+            alternatives = self._get_alternatives(recommended_tier)
+
+            log.info(f"Model selection: {recommended_tier} ({model_id}) for task type={req.task_type}")
+            return ModelSelectionResponse(
+                status="success",
+                recommended_tier=recommended_tier,
+                model_id=model_id,
+                reasoning=reasoning,
+                alternatives=alternatives,
+                estimated_cost=cost
+            ).to_dict()
+
+        except Exception as e:
+            log.error(f"ModelSelectionHandler error: {e}")
+            return ModelSelectionResponse(
+                status="error",
+                error_message=str(e)
+            ).to_dict()
+
+    def _analyze_complexity(self, task_description: str) -> str:
+        """Analyze task complexity: simple|normal|complex"""
+        words = len(task_description.split())
+
+        # Heuristics
+        complex_keywords = [
+            "architecture", "design", "implement", "optimize",
+            "research", "analyze", "synthesize", "multi-step"
+        ]
+        simple_keywords = ["summarize", "review", "check", "format"]
+
+        task_lower = task_description.lower()
+        has_complex = any(kw in task_lower for kw in complex_keywords)
+        has_simple = any(kw in task_lower for kw in simple_keywords)
+
+        if has_complex and words > 100:
+            return "complex"
+        elif has_simple or words < 50:
+            return "simple"
+        else:
+            return "normal"
+
+    def _select_tier(self, task_type: str, complexity: str, budget_tokens: int,
+                     speed_required: bool, accuracy_required: bool,
+                     budget_aware: bool) -> str:
+        """Select optimal tier"""
+
+        # Speed priority
+        if speed_required:
+            return "fast"
+
+        # Accuracy priority
+        if accuracy_required and not budget_aware:
+            if budget_tokens > 500_000:
+                return "ultra"
+            else:
+                return "premium"
+
+        # Task-based defaults
+        task_tiers = {
+            "code_review": "balanced",
+            "research": "premium",
+            "writing": "balanced",
+            "analysis": "premium",
+            "coding": "balanced"
+        }
+        base_tier = task_tiers.get(task_type, "balanced")
+
+        # Complexity adjustment
+        if complexity == "complex":
+            if base_tier == "balanced":
+                base_tier = "premium"
+            elif base_tier == "premium":
+                base_tier = "ultra"
+        elif complexity == "simple":
+            if base_tier == "balanced":
+                base_tier = "fast"
+
+        # Budget constraint
+        if budget_aware and budget_tokens < 50_000:
+            return "fast"  # Very low budget = use fast
+
+        return base_tier
+
+    def _estimate_cost(self, tier: str, text: str) -> float:
+        """Estimate token cost"""
+        # Rough: 1 token ≈ 4 chars
+        tokens = len(text) / 4
+        costs = self.TIER_COSTS[tier]
+
+        # Assume 1:1 input:output ratio
+        return (tokens * costs["input"] + tokens * costs["output"]) / 1_000_000
+
+    def _generate_reasoning(self, tier: str, complexity: str,
+                           req: ModelSelectionRequest) -> str:
+        """Generate explanation for tier choice"""
+        reasons = {
+            "fast": "Fast model for quick turnaround",
+            "balanced": "Balanced model for general tasks",
+            "premium": "Premium model for accuracy and quality",
+            "ultra": "Maximum capability for complex analysis"
+        }
+
+        reason = reasons.get(tier, "")
+
+        if req.speed_required:
+            reason += " (speed required)"
+        if req.accuracy_required:
+            reason += " (accuracy required)"
+        if complexity == "complex":
+            reason += " (complex task detected)"
+
+        return reason
+
+    def _get_alternatives(self, recommended_tier: str) -> List[Dict[str, Any]]:
+        """Get alternative model suggestions"""
+        tier_order = ["fast", "balanced", "premium", "ultra"]
+        current_idx = tier_order.index(recommended_tier)
+
+        alternatives = []
+        for i in [current_idx - 1, current_idx + 1]:
+            if 0 <= i < len(tier_order):
+                alt_tier = tier_order[i]
+                alternatives.append({
+                    "tier": alt_tier,
+                    "model_id": self.TIER_MODELS[alt_tier],
+                    "reason": "Faster" if i < current_idx else "More capable"
+                })
+
+        return alternatives
+
+    def get_name(self) -> str:
+        return "model_selection_request"
+
+
 class ResearchHandler(RequestHandler):
     """Handle research_request from Claude Code → Hermes"""
 
@@ -929,6 +1152,7 @@ class ClaudeCodeBridge:
         handlers = [
             CodeEditHandler(),
             GitOperationHandler(),
+            ModelSelectionHandler(),
             ResearchHandler(),
         ]
 
