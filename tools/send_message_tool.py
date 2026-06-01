@@ -15,6 +15,7 @@ import time
 from email.utils import formatdate
 
 from agent.redact import redact_sensitive_text
+from homeassistant_endpoint import resolve_homeassistant_url
 
 logger = logging.getLogger(__name__)
 
@@ -1465,10 +1466,15 @@ async def _send_homeassistant(token, extra, chat_id, message):
     except ImportError:
         return {"error": "aiohttp not installed. Run: pip install aiohttp"}
     try:
-        hass_url = (extra.get("url") or os.getenv("HASS_URL", "")).rstrip("/")
+        hass_url = resolve_homeassistant_url(extra.get("url"))
         token = token or os.getenv("HASS_TOKEN", "")
         if not hass_url or not token:
-            return {"error": "Home Assistant not configured (HASS_URL, HASS_TOKEN required)"}
+            return {
+                "error": (
+                    "Home Assistant not configured "
+                    "(config.yaml platforms.homeassistant.extra.url or legacy HASS_URL, plus HASS_TOKEN required)"
+                )
+            }
         url = f"{hass_url}/api/services/notify/notify"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:

@@ -21,6 +21,7 @@ from tools.homeassistant_tool import (
     _ENTITY_ID_RE,
     _SERVICE_NAME_RE,
 )
+from homeassistant_endpoint import DEFAULT_HOMEASSISTANT_URL, get_configured_homeassistant_url
 
 
 # ---------------------------------------------------------------------------
@@ -463,6 +464,44 @@ class TestCheckAvailable:
     def test_empty_token_is_unavailable(self, monkeypatch):
         monkeypatch.setenv("HASS_TOKEN", "")
         assert _check_ha_available() is False
+
+
+class TestConfigUrlResolution:
+    def test_reads_url_from_hermes_config(self, tmp_path, monkeypatch):
+        hermes_home = tmp_path / "hermes-home"
+        hermes_home.mkdir()
+        (hermes_home / "config.yaml").write_text(
+            "platforms:\n  homeassistant:\n    extra:\n      url: http://192.168.1.50:8123/\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        monkeypatch.delenv("HASS_URL", raising=False)
+
+        assert get_configured_homeassistant_url() == "http://192.168.1.50:8123"
+
+    def test_env_is_only_legacy_fallback(self, tmp_path, monkeypatch):
+        hermes_home = tmp_path / "hermes-home"
+        hermes_home.mkdir()
+        (hermes_home / "config.yaml").write_text("platforms: {}\n", encoding="utf-8")
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        monkeypatch.setenv("HASS_URL", "http://env-host:8123/")
+
+        from tools.homeassistant_tool import _get_config
+
+        url, _token = _get_config()
+        assert url == "http://env-host:8123"
+
+    def test_default_url_survives_when_no_config_or_env(self, tmp_path, monkeypatch):
+        hermes_home = tmp_path / "hermes-home"
+        hermes_home.mkdir()
+        (hermes_home / "config.yaml").write_text("platforms: {}\n", encoding="utf-8")
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        monkeypatch.delenv("HASS_URL", raising=False)
+
+        from tools.homeassistant_tool import _get_config
+
+        url, _token = _get_config()
+        assert url == DEFAULT_HOMEASSISTANT_URL
 
 
 # ---------------------------------------------------------------------------

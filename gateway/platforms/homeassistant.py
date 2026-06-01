@@ -9,7 +9,7 @@ persistent notifications.
 Requires:
 - aiohttp (already in messaging extras)
 - HASS_TOKEN env var (Long-Lived Access Token)
-- HASS_URL env var (default: http://homeassistant.local:8123)
+- Home Assistant URL in Hermes config or legacy HASS_URL env fallback
 """
 
 import asyncio
@@ -35,6 +35,7 @@ from gateway.platforms.base import (
     MessageType,
     SendResult,
 )
+from homeassistant_endpoint import resolve_homeassistant_url
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +76,7 @@ class HomeAssistantAdapter(BasePlatformAdapter):
         # Configuration from extra
         extra = config.extra or {}
         token = config.token or os.getenv("HASS_TOKEN", "")
-        url = extra.get("url") or os.getenv("HASS_URL", "http://homeassistant.local:8123")
-        self._hass_url: str = url.rstrip("/")
+        self._hass_url: str = resolve_homeassistant_url(extra.get("url"))
         self._hass_token: str = token
 
         # Event filtering

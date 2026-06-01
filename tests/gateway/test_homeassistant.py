@@ -198,6 +198,21 @@ class TestAdapterInit:
         adapter = HomeAssistantAdapter(config)
         assert adapter._hass_url == "http://env-host:8123"
 
+    def test_url_fallback_to_hermes_config(self, tmp_path, monkeypatch):
+        hermes_home = tmp_path / "hermes-home"
+        hermes_home.mkdir()
+        (hermes_home / "config.yaml").write_text(
+            "platforms:\n  homeassistant:\n    extra:\n      url: http://192.168.1.77:8123\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+        monkeypatch.delenv("HASS_URL", raising=False)
+        monkeypatch.setenv("HASS_TOKEN", "env-tok")
+
+        config = PlatformConfig(enabled=True, token="env-tok")
+        adapter = HomeAssistantAdapter(config)
+        assert adapter._hass_url == "http://192.168.1.77:8123"
+
     def test_trailing_slash_stripped(self):
         config = PlatformConfig(
             enabled=True, token="t",

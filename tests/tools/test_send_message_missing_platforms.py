@@ -266,6 +266,24 @@ class TestSendHomeAssistant:
         url = session.post.call_args[0][0]
         assert "hass.env.com" in url
 
+    def test_config_yaml_fallback(self, tmp_path):
+        resp = _make_aiohttp_resp(200)
+        session_ctx, session = _make_aiohttp_session(resp)
+        hermes_home = tmp_path / "hermes-home"
+        hermes_home.mkdir()
+        (hermes_home / "config.yaml").write_text(
+            "platforms:\n  homeassistant:\n    extra:\n      url: https://hass.cfg.example\n",
+            encoding="utf-8",
+        )
+
+        with patch("aiohttp.ClientSession", return_value=session_ctx), \
+             patch.dict(os.environ, {"HERMES_HOME": str(hermes_home), "HASS_URL": "", "HASS_TOKEN": "cfg-tok"}, clear=False):
+            result = asyncio.run(_send_homeassistant("", {}, "notify_target", "hi"))
+
+        assert result["success"] is True
+        url = session.post.call_args[0][0]
+        assert url == "https://hass.cfg.example/api/services/notify/notify"
+
 
 # ---------------------------------------------------------------------------
 # _send_dingtalk

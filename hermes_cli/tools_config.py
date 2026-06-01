@@ -453,10 +453,9 @@ TOOL_CATEGORIES = {
         "providers": [
             {
                 "name": "Home Assistant",
-                "tag": "REST API integration",
+                "tag": "REST API integration (URL via config.yaml, HASS_URL only as legacy fallback)",
                 "env_vars": [
                     {"key": "HASS_TOKEN", "prompt": "Home Assistant Long-Lived Access Token"},
-                    {"key": "HASS_URL", "prompt": "Home Assistant URL", "default": "http://homeassistant.local:8123"},
                 ],
             },
         ],

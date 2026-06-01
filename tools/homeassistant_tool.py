@@ -7,7 +7,8 @@ Registers four LLM-callable tools:
 - ``ha_call_service`` -- call a HA service (turn_on, turn_off, set_temperature, etc.)
 
 Authentication uses a Long-Lived Access Token via ``HASS_TOKEN`` env var.
-The HA instance URL is read from ``HASS_URL`` (default: http://homeassistant.local:8123).
+The HA instance URL is resolved from Hermes config first, then legacy
+``HASS_URL``, then the built-in default ``http://homeassistant.local:8123``.
 """
 
 import asyncio
@@ -16,6 +17,8 @@ import logging
 import os
 import re
 from typing import Any, Dict, Optional
+
+from homeassistant_endpoint import resolve_homeassistant_url
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +32,9 @@ _HASS_TOKEN: str = ""
 
 
 def _get_config():
-    """Return (hass_url, hass_token) from env vars at call time."""
+    """Return (hass_url, hass_token) from Hermes runtime state at call time."""
     return (
-        (_HASS_URL or os.getenv("HASS_URL", "http://homeassistant.local:8123")).rstrip("/"),
+        resolve_homeassistant_url(_HASS_URL),
         _HASS_TOKEN or os.getenv("HASS_TOKEN", ""),
     )
 
